@@ -10,19 +10,21 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
+# Ollama API Configuration
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST") # Aapke API ka URL
+OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY") # Aapki API Key
+
 COOLDOWN_DAYS = 5
 HISTORY_FILE = "history.json"
 LINKS_FILE = "links.txt"
 
-# --- 50+ RANDOM USER AGENTS ---
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.90 Mobile Safari/537.36",
-    # (Aap yahan baaki ke 40+ user agents jo pichle code mein the wo daal sakte hain)
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.90 Mobile Safari/537.36"
 ]
 
 def load_history():
@@ -74,26 +76,35 @@ def get_available_link():
     return random.choice(available_links), history
 
 def shorten_title_with_ollama(long_title):
-    """ Ollama (qwen3.5) ka use karke Amazon title ko short banana. """
-    print("Ollama AI se title short kar rahe hain...")
+    print("Ollama API se title short kar rahe hain...")
     prompt = f"Rewrite this Amazon product title to be catchy and short for a Pinterest pin (maximum 5 to 8 words). Just give the title, no quotes, no extra text: {long_title}"
     
     try:
-        from ollama import chat
-        response = chat(
+        from ollama import Client
+        
+        # Agar API Key hai toh Header mein lagayenge, warna normal Client banega
+        headers = {}
+        if OLLAMA_API_KEY:
+            headers = {'Authorization': f'Bearer {OLLAMA_API_KEY}'}
+            
+        client = Client(host=OLLAMA_HOST, headers=headers)
+        
+        # Aapka diya hua logic (qwen3.5)
+        response = client.chat(
             model='qwen3.5',
             messages=[{'role': 'user', 'content': prompt}],
         )
-        short_title = response.message.content.strip()
         
-        # Agar AI quotes laga de toh usko hatana
+        # Response extract karna
+        short_title = response['message']['content'].strip()
+        
         if short_title.startswith('"') and short_title.endswith('"'):
             short_title = short_title[1:-1]
             
-        print(f"Ollama Shortened Title: {short_title}")
+        print(f"Ollama API Shortened Title: {short_title}")
         return short_title
     except Exception as e:
-        print(f"Ollama Error (Kya Ollama server chal raha hai?): {e}")
+        print(f"Ollama API Error: {e}")
         return long_title[:60] + "..."
 
 def process_and_post():
@@ -118,7 +129,6 @@ def process_and_post():
         response = session.get(affiliate_link, headers=headers, allow_redirects=True, timeout=15)
         soup = BeautifulSoup(response.content, "html.parser")
         
-        # Safe Extraction (Bot prevention)
         title_element = soup.find("span", {"id": "productTitle"})
         if title_element is None:
             print("❌ Scraping failed! Amazon ne asli page ki jagah CAPTCHA de diya hai.")
@@ -135,7 +145,7 @@ def process_and_post():
             list_items = bullets.find_all("li")
             description = " ".join([li.get_text(strip=True) for li in list_items])
             
-        # Ollama AI Title Generation
+        # Ollama API ko call kar raha hai
         final_title = shorten_title_with_ollama(raw_title)
 
     except Exception as e:
