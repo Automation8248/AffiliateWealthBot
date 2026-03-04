@@ -1,36 +1,44 @@
-name: Amazon Affiliate Bot
+name: Amazon Affiliate Automation
+
 on:
   schedule:
-    - cron: '0 2,14 * * *'
-  workflow_dispatch:
-
-permissions:
-  contents: write
+    # Daily run at 14:00 UTC (9:00 AM EST)
+    - cron: '0 14 * * *'
+  workflow_dispatch: # GitHub Actions tab se manually run karne ke liye
 
 jobs:
-  build:
+  run-automation:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      - run: pip install requests beautifulsoup4
-      - env:
-          # Sirf yeh 3 basic secrets chahiye
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+
+      - name: Install Requirements
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright Browsers
+        # Sirf chromium install kar rahe hain taaki action fast run ho
+        run: playwright install chromium
+
+      - name: Run Main Script
+        env:
+          # Aapke GitHub repository secrets
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python scraper.py
-      - name: Update History
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: python main.py
+
+      - name: Commit Updated links.txt
+        # Yeh step process ho chuke link ko file se delete karke save karega
         run: |
-          git config --global user.name 'github-actions'
-          git config --global user.email 'github-actions@github.com'
-          git add history.json || exit 0
-          git commit -m "sync history" || exit 0
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add links.txt
+          git commit -m "Auto-removed processed Amazon link" || echo "No changes to commit"
           git push
-      - name: Install Dependencies
-        run: |
-         python -m pip install --upgrade pip
-          # Yahan cloudscraper ko add kiya gaya hai
-          pip install requests beautifulsoup4 cloudscraper     
