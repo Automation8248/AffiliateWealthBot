@@ -1,48 +1,31 @@
-name: Amazon Affiliate Auto Poster
-
+name: Amazon Affiliate Bot
 on:
   schedule:
     - cron: '0 2,14 * * *'
-  workflow_dispatch: 
+  workflow_dispatch:
 
 permissions:
-  contents: write 
+  contents: write
 
 jobs:
-  scrape-and-post:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests beautifulsoup4
-
-      - name: Run Scraper Script
-        env:
+      - run: pip install requests beautifulsoup4
+      - env:
+          # Sirf yeh 3 basic secrets chahiye
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: python scraper.py
-
-      - name: Commit Updated History File
+      - name: Update History
         run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          
-          if [[ -n $(git status --porcelain history.json) ]]; then
-            git add history.json
-            git commit -m "Auto-update history.json with latest timestamp"
-            git push
-          else
-            echo "Koi naya link post nahi hua, history file same hai."
-          fi
+          git config --global user.name 'github-actions'
+          git config --global user.email 'github-actions@github.com'
+          git add history.json || exit 0
+          git commit -m "sync history" || exit 0
+          git push
