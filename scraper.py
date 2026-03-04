@@ -1,12 +1,13 @@
 import os
 import random
-import requests
+import time
 import json
 import re
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
+import cloudscraper
 
-# --- CONFIGURATION (NO AI API REQUIRED) ---
+# --- CONFIGURATION ---
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL") 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -15,29 +16,24 @@ COOLDOWN_DAYS = 5
 HISTORY_FILE = "history.json"
 LINKS_FILE = "links.txt"
 
-# --- 100+ USER AGENTS TO PREVENT BLOCKING ---
-base_agents = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.90 Mobile Safari/537.36"
+# Real User "Kahan se aaya?" (Referers)
+HUMAN_REFERERS = [
+    "https://www.google.com/search?q=best+amazon+finds",
+    "https://www.bing.com/",
+    "https://www.pinterest.com/",
+    "https://www.facebook.com/",
+    "https://twitter.com/"
 ]
-generated_agents = [f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{random.randint(100, 122)}.0.{random.randint(1000, 9999)}.0 Safari/537.36" for _ in range(95)]
-USER_AGENTS = base_agents + generated_agents
 
 def clean_text(text):
-    """Stars (*) aur Hashtags (#) ko strictly remove karta hai"""
     if not text: return ""
     return re.sub(r'[*#]', '', text).strip()
 
 def smart_truncate_title(raw_title):
-    """Smart Logic: Amazon title ko comma (,) ya dash (-) se pehle cut karke clean title banata hai"""
     clean_title = re.split(r'[,|\-\(]', raw_title)[0].strip()
     return clean_text(clean_title[:80])
 
 def smart_truncate_desc(raw_desc, max_len=200):
-    """Smart Logic: Description ko exactly 200 characters tak limit karta hai, bina kisi word ko tode"""
     if len(raw_desc) <= max_len:
         return clean_text(raw_desc)
     truncated = raw_desc[:max_len]
@@ -67,57 +63,90 @@ def process_and_post():
     affiliate_link = random.choice(available)
     print(f"Processing Link: {affiliate_link}")
 
-    try:
-        # 1. Scrape Amazon Data
-        res = requests.get(affiliate_link, headers={"User-Agent": random.choice(USER_AGENTS)}, timeout=15)
-        soup = BeautifulSoup(res.content, "html.parser")
-        
-        title_node = soup.find("span", {"id": "productTitle"})
-        if not title_node: 
-            print("❌ Amazon ne block kiya (Captcha). Skipping...")
-            return
-        
-        raw_title = title_node.get_text(strip=True)
-        img_url = soup.find("img", {"id": "landingImage"})['src']
-        bullets = soup.find("div", {"id": "feature-bullets"})
-        raw_desc = " ".join([li.get_text(strip=True) for li in bullets.find_all("li")]) if bullets else "Great quality kitchen and home find on Amazon."
-        
-        # Scrape Category
-        category_node = soup.select_one('#wayfinding-breadcrumbs_container ul li:first-child a')
-        category = category_node.get_text(strip=True) if category_node else "General"
+    # Asli Insaan ka Browser Setup (Cloudscraper handles the deep TLS fingerprints)
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        }
+    )
 
-        # 2. Smart Formatting (No AI API used)
-        f_title = smart_truncate_title(raw_title)
-        f_desc = smart_truncate_desc(raw_desc, 200)
+    success = False
+    
+    # Retry System
+    for attempt in range(3):
+        print(f"Attempt {attempt + 1}...")
+        try:
+            # 1. HUMAN BEHAVIOR: Random Wait Time (Insaan turant click nahi karta)
+            wait_time = random.uniform(3.5, 7.5)
+            print(f"Human delay... waiting {wait_time:.2f} seconds before clicking.")
+            time.sleep(wait_time)
 
-        # 3. Telegram Post (Strictly Image, Title, Link Only)
-        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            clean_token = str(TELEGRAM_BOT_TOKEN).split(']')[-1].strip().replace('[', '').replace(']', '')
-            t_url = f"https://api.telegram.org/bot{clean_token}/sendPhoto"
+            # 2. HUMAN BEHAVIOR: Referer (Amazon ko lagega Google ya Pinterest se traffic aaya hai)
+            headers = {
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": random.choice(HUMAN_REFERERS),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+            }
+
+            res = scraper.get(affiliate_link, headers=headers, timeout=20, allow_redirects=True)
+            soup = BeautifulSoup(res.content, "html.parser")
             
-            # Sirf Title aur Link, Description hata diya gaya hai
-            caption = f"🔥 <b>{f_title}</b>\n\n🛒 <b>Product Link:</b> {affiliate_link}"
-            requests.post(t_url, data={"chat_id": TELEGRAM_CHAT_ID, "photo": img_url, "caption": caption, "parse_mode": "HTML"})
-            print("✅ Telegram par bhej diya gaya.")
+            title_node = soup.find("span", {"id": "productTitle"})
+            
+            if title_node:
+                raw_title = title_node.get_text(strip=True)
+                img_node = soup.find("img", {"id": "landingImage"})
+                img_url = img_node['src'] if img_node else ""
+                
+                bullets = soup.find("div", {"id": "feature-bullets"})
+                raw_desc = " ".join([li.get_text(strip=True) for li in bullets.find_all("li")]) if bullets else "Great quality kitchen and home find on Amazon."
+                
+                category_node = soup.select_one('#wayfinding-breadcrumbs_container ul li:first-child a')
+                category = category_node.get_text(strip=True) if category_node else "General"
+                
+                success = True
+                break
+            else:
+                print("Amazon ne Captcha dikhaya. Agle attempt ke liye ready ho rahe hain...")
+                time.sleep(random.uniform(4.0, 8.0))
 
-        # 4. Webhook Post (Includes Category and max 200 char Description)
-        if WEBHOOK_URL:
-            requests.post(WEBHOOK_URL, json={
-                "title": f_title, 
-                "image": img_url, 
-                "link": affiliate_link, 
-                "desc": f_desc,
-                "category": category
-            })
+        except Exception as e:
+            print(f"Request Error: {e}")
+            time.sleep(5)
+
+    if not success:
+        print("❌ Blocked. Amazon ko abhi bhi shaq hai. GitHub action next time schedule par try karega.")
+        return
+
+    # Formatting
+    f_title = smart_truncate_title(raw_title)
+    f_desc = smart_truncate_desc(raw_desc, 200)
+
+    # Telegram (Sirf Title, Link)
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        clean_token = str(TELEGRAM_BOT_TOKEN).split(']')[-1].strip().replace('[', '').replace(']', '')
+        t_url = f"https://api.telegram.org/bot{clean_token}/sendPhoto"
+        caption = f"🔥 <b>{f_title}</b>\n\n🛒 <b>Product Link:</b> {affiliate_link}"
+        t_res = requests.post(t_url, data={"chat_id": TELEGRAM_CHAT_ID, "photo": img_url, "caption": caption, "parse_mode": "HTML"})
+        if t_res.status_code == 200:
+            print("✅ Telegram par bhej diya gaya.")
+        else:
+            print(f"⚠️ Telegram Error: {t_res.text}")
+
+    # Webhook
+    if WEBHOOK_URL:
+        w_res = requests.post(WEBHOOK_URL, json={
+            "title": f_title, "image": img_url, "link": affiliate_link, "desc": f_desc, "category": category
+        })
+        if w_res.status_code == 200:
             print("✅ Webhook par bhej diya gaya.")
 
-        # Save History
-        history[affiliate_link] = now.isoformat()
-        with open(HISTORY_FILE, "w") as f: json.dump(history, f, indent=4)
-        print("✅ Automation Successful!")
-
-    except Exception as e:
-        print(f"System Error: {e}")
+    # Save History
+    history[affiliate_link] = now.isoformat()
+    with open(HISTORY_FILE, "w") as f: json.dump(history, f, indent=4)
+    print("✅ All Automation Tasks Successful!")
 
 if __name__ == "__main__":
     process_and_post()
