@@ -195,7 +195,7 @@ def process_and_post():
     # 1. Telegram par bhejna
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-        caption = f"🔥 **{final_title}**\n\n✨ {description[:120]}...\n\n🛒 **Buy Here:** {affiliate_link}"
+        caption = f"🔥 **{final_title}**\n\n✨ \n\n🛒 **Buy Here:** {affiliate_link}"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "photo": image_url, "caption": caption, "parse_mode": "Markdown"}
         t_res = requests.post(telegram_api_url, data=payload)
         if t_res.status_code == 200:
