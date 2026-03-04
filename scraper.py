@@ -2,10 +2,11 @@ import os
 import random
 import requests
 import json
+import re
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 
-# --- CONFIGURATION FROM GITHUB SECRETS ---
+# --- CONFIGURATION ---
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL") 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -15,178 +16,88 @@ COOLDOWN_DAYS = 5
 HISTORY_FILE = "history.json"
 LINKS_FILE = "links.txt"
 
-# --- 100+ USER AGENTS TO PREVENT AMAZON CAPTCHA BLOCKING ---
-base_agents = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.90 Mobile Safari/537.36",
-]
-generated_agents = [f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{random.randint(100, 122)}.0.{random.randint(1000, 9999)}.0 Safari/537.36" for _ in range(95)]
-USER_AGENTS = base_agents + generated_agents
-
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r") as f:
-            try:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-            except: return {}
-    return {}
-
-def save_history(history):
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(history, f, indent=4)
+# --- 100+ USER AGENTS ---
+USER_AGENTS = [f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{random.randint(110, 122)}.0.{random.randint(1000, 9999)}.{random.randint(10, 99)} Safari/537.36" for _ in range(100)]
 
 def clean_text(text):
-    """Removes stars and hashtags strictly"""
-    return text.replace('*', '').replace('#', '').strip()
+    """Stars aur Hashtags hatane ke liye"""
+    return re.sub(r'[*#]', '', text).strip()
 
 def process_with_openrouter(raw_title, raw_desc):
-    """OpenRouter API call logic"""
-    if not OPENROUTER_API_KEY:
-        return None, None, "No API Key"
-
-    prompt = f"""
-    Product Title: {raw_title}
-    Features: {raw_desc}
-
-    Task:
-    1. Create a short, catchy title (max 8 words).
-    2. Write an engaging hook followed by a short product description.
-    3. The description length MUST be exactly around 300-400 characters, maximum 400.
-    4. STRICT RULE: DO NOT use any hashtags or asterisks anywhere.
+    """OpenRouter Fallback Logic"""
+    if not OPENROUTER_API_KEY: return None, None, "No API Key"
     
-    Output strictly in JSON format with two keys: "title" and "description".
-    """
-
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+    prompt = f"Short title (8 words) and catchy description (400 chars max, no # or *) for: {raw_title}. Output JSON format."
+    data = {"model": "google/gemini-2.0-flash-lite:free", "messages": [{"role": "user", "content": prompt}]}
     
-    data = {
-        "model": "google/gemini-2.5-flash", # Aap yahan OpenRouter ka koi bhi model daal sakte hain
-        "messages": [{"role": "user", "content": prompt}]
-    }
-
     try:
-        res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=20)
-        res.raise_for_status()
+        res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=15)
+        if res.status_code == 402: return None, None, "Payment Required/Limit Reached"
         
-        ai_text = res.json()['choices'][0]['message']['content'].strip()
-        
-        # Parse JSON safely
-        if ai_text.startswith("```"):
-            ai_text = ai_text.strip("`").replace("json", "", 1).strip()
-            
-        result = json.loads(ai_text)
-        
-        # Clean tags and symbols
-        title = clean_text(result.get("title", ""))
-        desc = clean_text(result.get("description", ""))
-        
-        # Strict 400 character limit enforcement
-        if len(desc) > 400:
-            desc = desc[:397] + "..."
-            
-        return title, desc, None
-        
-    except Exception as e:
-        return None, None, str(e)
+        content = res.json()['choices'][0]['message']['content']
+        # JSON parsing logic
+        match = re.search(r'\{.*\}', content, re.DOTALL)
+        if match:
+            result = json.loads(match.group())
+            return clean_text(result.get("title", "")), clean_text(result.get("description", ""))[:400], None
+    except: pass
+    return None, None, "API Error"
 
 def process_and_post():
-    if not os.path.exists(LINKS_FILE): 
-        print(f"Error: {LINKS_FILE} nahi mila.")
-        return
-        
+    if not os.path.exists(LINKS_FILE): return
     with open(LINKS_FILE, "r") as f:
         all_links = [l.strip() for l in f.readlines() if l.strip()]
     
-    history = load_history()
+    history = {}
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r") as f: history = json.load(f)
+        except: history = {}
+
     now = datetime.now()
-    
     available = [l for l in all_links if l not in history or (now - datetime.fromisoformat(history[l])) >= timedelta(days=COOLDOWN_DAYS)]
     
-    if not available:
-        print(f"Sabhi links {COOLDOWN_DAYS} din ke cooldown par hain.")
-        return
-
+    if not available: return
     affiliate_link = random.choice(available)
-    print(f"Processing: {affiliate_link}")
-
-    headers = {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "[https://www.google.com/](https://www.google.com/)"
-    }
 
     try:
-        res = requests.get(affiliate_link, headers=headers, timeout=15, allow_redirects=True)
+        res = requests.get(affiliate_link, headers={"User-Agent": random.choice(USER_AGENTS)}, timeout=15)
         soup = BeautifulSoup(res.content, "html.parser")
         
-        # Scrape default elements
         title_node = soup.find("span", {"id": "productTitle"})
-        if not title_node: 
-            print("❌ Amazon block (Captcha). Code safely skipping.")
-            return
-            
+        if not title_node: return
+        
         raw_title = title_node.get_text(strip=True)
-        img_node = soup.find("img", {"id": "landingImage"})
-        img_url = img_node['src'] if img_node else ""
+        img_url = soup.find("img", {"id": "landingImage"})['src']
         
-        bullets = soup.find("div", {"id": "feature-bullets"})
-        raw_desc = " ".join([li.get_text(strip=True) for li in bullets.find_all("li")]) if bullets else "High quality kitchen product."
+        # AI Logic
+        f_title, f_desc, err = process_with_openrouter(raw_title, "Kitchen Accessory")
+        alert = ""
+        
+        if err: # Fallback System
+            f_title = clean_text(raw_title[:80])
+            f_desc = "Check out this amazing kitchen find on Amazon! Limited time deal."
+            alert = "\n\n<i>⚠️ OpenRouter limit reached. Using default system.</i>"
 
-        # Attempt AI Generation
-        final_title, final_desc, ai_error = process_with_openrouter(raw_title, raw_desc)
-        
-        alert_message = ""
-        
-        # Fallback Logic if AI fails or limit is reached
-        if ai_error:
-            print(f"⚠️ OpenRouter failed ({ai_error}). Using default system.")
-            final_title = clean_text(raw_title[:100])
-            
-            clean_raw_desc = clean_text(raw_desc)
-            if len(clean_raw_desc) > 400:
-                final_desc = clean_raw_desc[:397] + "..."
-            else:
-                final_desc = clean_raw_desc
-                
-            alert_message = "\n\n<i>⚠️ Alert: OpenRouter limit reached or error occurred. Using default system.</i>"
-
-        # 1. Telegram Post (Using HTML to avoid markdown asterisk conflicts)
+        # Telegram Fix: URL ko manual construct karna
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            t_url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendPhoto"
-            caption = f"🔥 <b>{final_title}</b>\n\n{final_desc}\n\n🛒 <b>Buy Here:</b> {affiliate_link}{alert_message}"
-            
-            t_res = requests.post(t_url, data={"chat_id": TELEGRAM_CHAT_ID, "photo": img_url, "caption": caption, "parse_mode": "HTML"})
-            if t_res.status_code == 200: 
-                print("✅ Telegram Post Success")
-            else:
-                print(f"❌ Telegram Error: {t_res.text}")
+            # Token se link/bracket hatane ke liye cleaning
+            clean_token = TELEGRAM_BOT_TOKEN.replace("https://api.telegram.org/bot", "").replace("[", "").replace("]", "").strip()
+            t_url = f"https://api.telegram.org/bot{clean_token}/sendPhoto"
+            caption = f"🔥 <b>{f_title}</b>\n\n{f_desc}\n\n🛒 <b>Buy Here:</b> {affiliate_link}{alert}"
+            requests.post(t_url, data={"chat_id": TELEGRAM_CHAT_ID, "photo": img_url, "caption": caption, "parse_mode": "HTML"})
 
-        # 2. Webhook Post
+        # Webhook
         if WEBHOOK_URL:
-            w_res = requests.post(WEBHOOK_URL, json={
-                "title": final_title, 
-                "image_url": img_url, 
-                "link": affiliate_link, 
-                "desc": final_desc
-            })
-            if w_res.status_code == 200: 
-                print("✅ Webhook Post Success")
+            requests.post(WEBHOOK_URL, json={"title": f_title, "image": img_url, "link": affiliate_link, "desc": f_desc})
 
-        # Update History
         history[affiliate_link] = now.isoformat()
-        save_history(history)
-        print("✅ Data successfully sent and history updated!")
+        with open(HISTORY_FILE, "w") as f: json.dump(history, f, indent=4)
+        print("✅ Done")
 
     except Exception as e:
-        print(f"Error occurred during scraping/posting: {e}")
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
     process_and_post()
