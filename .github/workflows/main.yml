@@ -1,13 +1,16 @@
-name: Amazon Affiliate Automation
+name: Amazon Affiliate Auto Poster
 
 on:
   schedule:
-    # Daily run at 14:00 UTC (9:00 AM EST)
-    - cron: '0 14 * * *'
-  workflow_dispatch: # GitHub Actions tab se manually run karne ke liye
+    # Din mein 2 baar chalega: UTC 02:00 aur 14:00 
+    - cron: '0 2,14 * * *'
+  workflow_dispatch: # Manual run ke liye button dega
+
+permissions:
+  contents: write # Repository mein wapas commit karne ki permission
 
 jobs:
-  run-automation:
+  scrape-and-post:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,26 +22,29 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Requirements
-        run: pip install -r requirements.txt
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
 
-      - name: Install Playwright Browsers
-        # Sirf chromium install kar rahe hain taaki action fast run ho
-        run: playwright install chromium
-
-      - name: Run Main Script
+      - name: Run Scraper Script
         env:
-          # Aapke GitHub repository secrets
+          # Aapke saare secrets jo Settings > Secrets and variables mein hain
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-        run: python main.py
+        run: python scraper.py
 
-      - name: Commit Updated links.txt
-        # Yeh step process ho chuke link ko file se delete karke save karega
+      - name: Commit Updated History File
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add links.txt
-          git commit -m "Auto-removed processed Amazon link" || echo "No changes to commit"
-          git push
+          
+          # Agar history.json mein koi naya data aya hai, toh use commit kar do
+          if [[ -n $(git status --porcelain history.json) ]]; then
+            git add history.json
+            git commit -m "Auto-update history.json with latest posted link timestamp"
+            git push
+          else
+            echo "Koi naya link post nahi hua, history file same hai."
+          fi
