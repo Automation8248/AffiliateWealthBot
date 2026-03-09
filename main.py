@@ -251,7 +251,8 @@ def process_and_post():
             "title": final_title,
             "description": short_description,
             "affiliate_link": affiliate_link,
-            "tags": final_tags
+            "tags": final_tags,
+            "image_url": image_url
         }
         if image_downloaded:
             with open(TEMP_IMAGE_FILE, 'rb') as image_file:
