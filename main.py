@@ -1,25 +1,26 @@
 import os
 import random
+import time
 import requests
 from bs4 import BeautifulSoup
 import json
+import urllib.parse
 from datetime import datetime, timedelta
+from playwright.sync_api import sync_playwright
 
 # --- SECRETS & CONFIGURATION ---
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL") 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# --- 7 DAYS COOLDOWN LOGIC ---
 COOLDOWN_DAYS = 7 
-
 HISTORY_FILE = "history.json"
 LINKS_FILE = "links.txt"
 TEMP_IMAGE_FILE = "temp_image.jpg"
 TITLES_FILE = "titles.txt"
 TAGS_FILE = "tags.txt"
 
-# --- 50+ RANDOM USER AGENTS ---
+# --- 50+ RANDOM USER AGENTS (PURI LIST) ---
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -78,11 +79,7 @@ def load_history():
         with open(HISTORY_FILE, "r") as f:
             try:
                 data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-                else:
-                    print("Warning: history.json was a list. Resetting to empty dict.")
-                    return {} 
+                return data if isinstance(data, dict) else {}
             except json.JSONDecodeError:
                 return {}
     return {}
@@ -126,25 +123,16 @@ def get_available_link():
 def get_random_title():
     if not os.path.exists(TITLES_FILE):
         return "Check Out This Awesome Product! 🔥" 
-    
     with open(TITLES_FILE, "r", encoding="utf-8") as f:
         titles = [line.strip() for line in f.readlines() if line.strip()]
-        
-    if not titles:
-        return "Check Out This Awesome Product! 🔥"
-        
-    return random.choice(titles)
+    return random.choice(titles) if titles else "Check Out This Awesome Product! 🔥"
 
 def get_random_tags(count=9):
     if not os.path.exists(TAGS_FILE):
         return "" 
-        
     with open(TAGS_FILE, "r", encoding="utf-8") as f:
         tags = [line.strip().replace("#", "") for line in f.readlines() if line.strip()]
-        
-    if not tags:
-        return ""
-        
+    if not tags: return ""
     selected_tags = random.sample(tags, min(count, len(tags)))
     return " ".join([f"#{tag}" for tag in selected_tags])
 
@@ -155,94 +143,119 @@ def process_and_post():
 
     affiliate_link, history = result
     print(f"Processing Link: {affiliate_link}")
-    
     random_user_agent = random.choice(USER_AGENTS)
     
-    # EXTRA ANTI-BOT HEADERS ADDED HERE
-    headers = {
-        "User-Agent": random_user_agent,
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Referer": "https://www.google.com/",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "cross-site",
-        "Sec-Fetch-User": "?1",
-        "Connection": "keep-alive"
-    }
-    
-    try:
-        session = requests.Session()
-        response = session.get(affiliate_link, headers=headers, allow_redirects=True, timeout=15)
-        soup = BeautifulSoup(response.content, "html.parser")
+    # --- START REAL BROWSER (PLAYWRIGHT) ---
+    with sync_playwright() as p:
+        print("Asli browser open kar rahe hain...")
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent=random_user_agent,
+            viewport={'width': 1920, 'height': 1080}
+        )
+        page = context.new_page()
         
-        # Check for CAPTCHA block
-        title_element = soup.find("span", {"id": "productTitle"})
-        if title_element is None:
-            print("❌ Scraping failed! Amazon ne asli page ki jagah CAPTCHA de diya hai.")
-            print("Action: Yeh link skip kar rahe hain, code crash nahi hoga. Next time retry hoga.")
+        try:
+            # 1. Page load karo
+            page.goto(affiliate_link, timeout=45000)
+            print("Page par pohoch gaye, insaan ki tarah wait kar rahe hain...")
+            
+            # 2. Human Behavior: 2 se 5 second wait karna
+            time.sleep(random.uniform(2.0, 5.0))
+            
+            # 3. Screenshot 1: Load hone ke turant baad
+            page.screenshot(path="screenshot_1_loaded.png")
+            print("📸 Screenshot liya: Page Load.")
+
+            # 4. Human Behavior: Mouse hilaana
+            page.mouse.move(random.randint(100, 500), random.randint(100, 500))
+            time.sleep(random.uniform(0.5, 1.5))
+            
+            # 5. Human Behavior: Niche Scroll karna product details padhne ke liye
+            print("Niche scroll kar rahe hain...")
+            page.mouse.wheel(0, random.randint(400, 1000))
+            time.sleep(random.uniform(1.0, 3.0))
+            
+            # 6. Screenshot 2: Scroll karne ke baad
+            page.screenshot(path="screenshot_2_scrolled.png")
+            print("📸 Screenshot liya: Scroll karne ke baad.")
+
+            # --- EXTRACT DATA ---
+            # Check for CAPTCHA
+            if page.locator("#captchacharacters").count() > 0:
+                print("❌ Amazon ne abhi bhi CAPTCHA de diya (IP block).")
+                page.screenshot(path="screenshot_error_captcha.png")
+                browser.close()
+                return
+
+            # Title
+            title_locator = page.locator("#productTitle")
+            if title_locator.count() == 0:
+                print("❌ Product title nahi mila.")
+                page.screenshot(path="screenshot_error_notitle.png")
+                browser.close()
+                return
+            
+            raw_title = title_locator.inner_text().strip()
+            
+            # Image
+            image_url = ""
+            img_locator = page.locator("#landingImage")
+            if img_locator.count() > 0:
+                image_url = img_locator.get_attribute("src")
+
+            # Description
+            description = ""
+            bullets_locator = page.locator("#feature-bullets li")
+            if bullets_locator.count() > 0:
+                description = " ".join(bullets_locator.all_inner_texts()).replace('\n', ' ')
+
+        except Exception as e:
+            print(f"Scraping failed inside browser. Error: {e}")
+            page.screenshot(path="screenshot_crash.png")
+            browser.close()
             return
-            
-        # Image extract and download
-        image_element = soup.find("img", {"id": "landingImage"})
-        image_url = image_element['src'] if image_element else ""
-        
-        image_downloaded = False
-        if image_url:
-            print(f"Downloading image from: {image_url}")
-            img_response = requests.get(image_url, stream=True)
-            if img_response.status_code == 200:
-                with open(TEMP_IMAGE_FILE, 'wb') as f:
-                    for chunk in img_response.iter_content(1024):
-                        f.write(chunk)
-                image_downloaded = True
-                print("✅ Image successfully downloaded.")
-            else:
-                print("❌ Failed to download image.")
 
-        # Description extract (Max 300 Chars)
-        bullets = soup.find("div", {"id": "feature-bullets"})
-        description = ""
-        if bullets:
-            list_items = bullets.find_all("li")
-            description = " ".join([li.get_text(strip=True) for li in list_items])
-            
-        if len(description) > 300:
-            short_description = description[:297] + "..."
-        else:
-            short_description = description
+        browser.close()
+        print("Browser band kar diya. Data mil gaya.")
 
-        # Files se Random Title aur Tags uthana
-        final_title = get_random_title()
-        final_tags = get_random_tags(count=9)
+    # --- IMAGE DOWNLOAD ---
+    image_downloaded = False
+    if image_url:
+        img_response = requests.get(image_url, stream=True)
+        if img_response.status_code == 200:
+            with open(TEMP_IMAGE_FILE, 'wb') as f:
+                for chunk in img_response.iter_content(1024):
+                    f.write(chunk)
+            image_downloaded = True
 
-    except Exception as e:
-        print(f"Scraping request failed. Error: {e}")
-        return
+    # 300 Chars Limit Description
+    short_description = description[:297] + "..." if len(description) > 300 else description
+    
+    # Files se Random Title aur Tags
+    final_title = get_random_title()
+    final_tags = get_random_tags(count=9)
 
-    # 1. Telegram par bhejna
+    # --- 1. TELEGRAM POST (ONLY IMAGE, TITLE, LINK) ---
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        caption = f"🔥 **{final_title}**\n\n🛒 **Buy Here:** {affiliate_link}"
+        telegram_caption = f"🔥 **{final_title}**\n\n🛒 **Buy Here:** {affiliate_link}"
         
         if image_downloaded:
-            telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+            t_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
             with open(TEMP_IMAGE_FILE, 'rb') as photo:
-                payload = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption, "parse_mode": "Markdown"}
-                files = {"photo": photo}
-                t_res = requests.post(telegram_api_url, data=payload, files=files)
+                payload = {"chat_id": TELEGRAM_CHAT_ID, "caption": telegram_caption, "parse_mode": "Markdown"}
+                t_res = requests.post(t_url, data=payload, files={"photo": photo})
         else:
-            telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": caption, "parse_mode": "Markdown"}
-            t_res = requests.post(telegram_api_url, data=payload)
+            t_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": telegram_caption, "parse_mode": "Markdown"}
+            t_res = requests.post(t_url, data=payload)
             
         if t_res.status_code == 200:
-            print("✅ Telegram par message chala gaya!")
+            print("✅ Telegram par message gaya!")
         else:
             print(f"❌ Telegram Error: {t_res.text}")
 
-    # 2. Webhook par bhejna
+    # --- 2. WEBHOOK POST (ALL DATA: TITLE, DESCRIPTION, LINK, TAGS, IMAGE) ---
     if WEBHOOK_URL:
         webhook_data = {
             "title": final_title,
@@ -250,28 +263,25 @@ def process_and_post():
             "affiliate_link": affiliate_link,
             "tags": final_tags
         }
-        
         if image_downloaded:
             with open(TEMP_IMAGE_FILE, 'rb') as image_file:
-                files = {"image": image_file} 
-                w_res = requests.post(WEBHOOK_URL, data=webhook_data, files=files)
+                w_res = requests.post(WEBHOOK_URL, data=webhook_data, files={"image": image_file})
         else:
             w_res = requests.post(WEBHOOK_URL, data=webhook_data)
             
         if w_res.status_code == 200:
-            print("✅ Webhook par data chala gaya!")
+            print("✅ Webhook par data gaya!")
         else:
             print(f"❌ Webhook Error: {w_res.status_code}")
 
-    # 3. Post hone ke baad History Update karna (Yahin se 7 din ka timer shuru hoga)
+    # --- HISTORY UPDATE (7-DAY COOLDOWN START) ---
     history[affiliate_link] = datetime.now().isoformat()
     save_history(history)
     print("✅ History update ho gayi! Ab yeh link 7 din baad hi repeat hoga.")
     
-    # 4. Clean Up
+    # --- CLEANUP ---
     if os.path.exists(TEMP_IMAGE_FILE):
         os.remove(TEMP_IMAGE_FILE)
-        print("🧹 Temporary image deleted.")
 
 if __name__ == "__main__":
     process_and_post()
