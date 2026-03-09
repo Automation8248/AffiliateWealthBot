@@ -3,7 +3,6 @@ import random
 import requests
 from bs4 import BeautifulSoup
 import json
-import urllib.parse
 from datetime import datetime, timedelta
 
 # --- SECRETS & CONFIGURATION ---
@@ -11,12 +10,12 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-COOLDOWN_DAYS = 5
+# --- 7 DAYS COOLDOWN LOGIC ---
+COOLDOWN_DAYS = 7 
+
 HISTORY_FILE = "history.json"
 LINKS_FILE = "links.txt"
 TEMP_IMAGE_FILE = "temp_image.jpg"
-
-# --- NEW: FILE NAMES FOR TITLES AND TAGS ---
 TITLES_FILE = "titles.txt"
 TAGS_FILE = "tags.txt"
 
@@ -82,6 +81,7 @@ def load_history():
                 if isinstance(data, dict):
                     return data
                 else:
+                    print("Warning: history.json was a list. Resetting to empty dict.")
                     return {} 
             except json.JSONDecodeError:
                 return {}
@@ -111,6 +111,7 @@ def get_available_link():
         if link in history:
             last_used_str = history[link]
             last_used_date = datetime.fromisoformat(last_used_str)
+            # 7 Din ka Cooldown check
             if now - last_used_date >= timedelta(days=COOLDOWN_DAYS):
                 available_links.append(link)
         else:
@@ -122,10 +123,9 @@ def get_available_link():
 
     return random.choice(available_links), history
 
-# --- NEW HELPER FUNCTIONS FOR TITLES AND TAGS ---
 def get_random_title():
     if not os.path.exists(TITLES_FILE):
-        return "Check Out This Awesome Product! 🔥" # Fallback agar file na ho
+        return "Check Out This Awesome Product! 🔥" 
     
     with open(TITLES_FILE, "r", encoding="utf-8") as f:
         titles = [line.strip() for line in f.readlines() if line.strip()]
@@ -137,19 +137,15 @@ def get_random_title():
 
 def get_random_tags(count=9):
     if not os.path.exists(TAGS_FILE):
-        return "" # Fallback agar file na ho
+        return "" 
         
     with open(TAGS_FILE, "r", encoding="utf-8") as f:
-        # Har tag ke aage se '#' hata kar clean karna, taki duplicate '#' na lag jaye
         tags = [line.strip().replace("#", "") for line in f.readlines() if line.strip()]
         
     if not tags:
         return ""
         
-    # Sirf required number of tags uthana (maximum 9)
     selected_tags = random.sample(tags, min(count, len(tags)))
-    
-    # Unhe '#' ke sath ek string mein join karna
     return " ".join([f"#{tag}" for tag in selected_tags])
 
 def process_and_post():
@@ -161,12 +157,20 @@ def process_and_post():
     print(f"Processing Link: {affiliate_link}")
     
     random_user_agent = random.choice(USER_AGENTS)
+    
+    # EXTRA ANTI-BOT HEADERS ADDED HERE
     headers = {
         "User-Agent": random_user_agent,
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Referer": "https://www.google.com/" 
+        "Referer": "https://www.google.com/",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "cross-site",
+        "Sec-Fetch-User": "?1",
+        "Connection": "keep-alive"
     }
     
     try:
@@ -174,19 +178,17 @@ def process_and_post():
         response = session.get(affiliate_link, headers=headers, allow_redirects=True, timeout=15)
         soup = BeautifulSoup(response.content, "html.parser")
         
-        # 1. SAFE EXTRACTION
+        # Check for CAPTCHA block
         title_element = soup.find("span", {"id": "productTitle"})
-        
         if title_element is None:
             print("❌ Scraping failed! Amazon ne asli page ki jagah CAPTCHA de diya hai.")
             print("Action: Yeh link skip kar rahe hain, code crash nahi hoga. Next time retry hoga.")
             return
             
-        # Image extract karna
+        # Image extract and download
         image_element = soup.find("img", {"id": "landingImage"})
         image_url = image_element['src'] if image_element else ""
         
-        # Image Download Logic
         image_downloaded = False
         if image_url:
             print(f"Downloading image from: {image_url}")
@@ -200,20 +202,19 @@ def process_and_post():
             else:
                 print("❌ Failed to download image.")
 
-        # Description extract karna
+        # Description extract (Max 300 Chars)
         bullets = soup.find("div", {"id": "feature-bullets"})
         description = ""
         if bullets:
             list_items = bullets.find_all("li")
             description = " ".join([li.get_text(strip=True) for li in list_items])
             
-        # 300 Character Description Logic
         if len(description) > 300:
             short_description = description[:297] + "..."
         else:
             short_description = description
 
-        # --- GET RANDOM TITLE & TAGS FROM FILES ---
+        # Files se Random Title aur Tags uthana
         final_title = get_random_title()
         final_tags = get_random_tags(count=9)
 
@@ -221,9 +222,8 @@ def process_and_post():
         print(f"Scraping request failed. Error: {e}")
         return
 
-    # 1. Telegram par bhejna (Tags ke sath)
+    # 1. Telegram par bhejna
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        # Caption mein title, description, link aur end mein tags
         caption = f"🔥 **{final_title}**\n\n✨ {short_description}\n\n🛒 **Buy Here:** {affiliate_link}\n\n{final_tags}"
         
         if image_downloaded:
@@ -244,7 +244,6 @@ def process_and_post():
 
     # 2. Webhook par bhejna
     if WEBHOOK_URL:
-        # Webhook ke data me bhi tags add kar diye gaye hain
         webhook_data = {
             "title": final_title,
             "description": short_description,
@@ -264,10 +263,10 @@ def process_and_post():
         else:
             print(f"❌ Webhook Error: {w_res.status_code}")
 
-    # 3. History Update
+    # 3. Post hone ke baad History Update karna (Yahin se 7 din ka timer shuru hoga)
     history[affiliate_link] = datetime.now().isoformat()
     save_history(history)
-    print("✅ History update ho gayi!")
+    print("✅ History update ho gayi! Ab yeh link 7 din baad hi repeat hoga.")
     
     # 4. Clean Up
     if os.path.exists(TEMP_IMAGE_FILE):
