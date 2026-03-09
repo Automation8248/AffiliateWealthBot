@@ -187,24 +187,14 @@ def process_and_post():
                 page.screenshot(path="screenshot_error_captcha.png")
                 browser.close()
                 return
-
-            # Title
-            title_locator = page.locator("#productTitle")
-            if title_locator.count() == 0:
-                print("❌ Product title nahi mila.")
-                page.screenshot(path="screenshot_error_notitle.png")
-                browser.close()
-                return
             
-            raw_title = title_locator.inner_text().strip()
-            
-            # Image
+            # Image extract karna
             image_url = ""
             img_locator = page.locator("#landingImage")
             if img_locator.count() > 0:
                 image_url = img_locator.get_attribute("src")
 
-            # Description
+            # Description extract karna
             description = ""
             bullets_locator = page.locator("#feature-bullets li")
             if bullets_locator.count() > 0:
@@ -232,7 +222,7 @@ def process_and_post():
     # 300 Chars Limit Description
     short_description = description[:297] + "..." if len(description) > 300 else description
     
-    # Files se Random Title aur Tags
+    # Files se Random Title (Keval 1) aur Tags (Keval 9) select karna
     final_title = get_random_title()
     final_tags = get_random_tags(count=9)
 
