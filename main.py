@@ -16,9 +16,14 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 COOLDOWN_DAYS = 7 
 HISTORY_FILE = "history.json"
 LINKS_FILE = "links.txt"
-TEMP_IMAGE_FILE = "temp_image.jpg"
 TITLES_FILE = "titles.txt"
 TAGS_FILE = "tags.txt"
+
+# --- NAYA LOGIC: IMAGE FOLDER AUR GITHUB URL ---
+IMAGE_DIR = "images"
+TEMP_IMAGE_FILE = f"{IMAGE_DIR}/pro_img.jpg"
+# GitHub repo ka naam automatic uthane ke liye
+GITHUB_REPO = os.environ.get("GITHUB_REPOSITORY", "AapkaUsername/AapkaRepo")
 
 # --- 50+ RANDOM USER AGENTS (PURI LIST) ---
 USER_AGENTS = [
@@ -209,9 +214,13 @@ def process_and_post():
         browser.close()
         print("Browser band kar diya. Data mil gaya.")
 
-    # --- IMAGE DOWNLOAD ---
+    # --- IMAGE DOWNLOAD (WITH FOLDER LOGIC) ---
     image_downloaded = False
     if image_url:
+        # Check karega ki images folder hai ya nahi, nahi hai to banayega
+        if not os.path.exists(IMAGE_DIR):
+            os.makedirs(IMAGE_DIR)
+            
         img_response = requests.get(image_url, stream=True)
         if img_response.status_code == 200:
             with open(TEMP_IMAGE_FILE, 'wb') as f:
@@ -245,15 +254,20 @@ def process_and_post():
         else:
             print(f"❌ Telegram Error: {t_res.text}")
 
-    # --- 2. WEBHOOK POST (ALL DATA: TITLE, DESCRIPTION, LINK, TAGS, IMAGE) ---
+    # --- 2. WEBHOOK POST (ALL DATA: TITLE, DESCRIPTION, LINK, TAGS, IMAGE RAW URL) ---
     if WEBHOOK_URL:
+        # GitHub Raw Image URL Banayein
+        raw_image_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{TEMP_IMAGE_FILE}"
+        
         webhook_data = {
             "title": final_title,
             "description": short_description,
             "affiliate_link": affiliate_link,
             "tags": final_tags,
-            "image_url": image_url
+            "image_url": raw_image_url  # Ab yahan seedha GitHub ka safe link ja raha hai
         }
+        
+        # Make.com ko File bhi bhejega (agar file chahiye to) aur URL bhi.
         if image_downloaded:
             with open(TEMP_IMAGE_FILE, 'rb') as image_file:
                 w_res = requests.post(WEBHOOK_URL, data=webhook_data, files={"image": image_file})
@@ -270,9 +284,9 @@ def process_and_post():
     save_history(history)
     print("✅ History update ho gayi! Ab yeh link 7 din baad hi repeat hoga.")
     
-    # --- CLEANUP ---
-    if os.path.exists(TEMP_IMAGE_FILE):
-        os.remove(TEMP_IMAGE_FILE)
+    # --- CLEANUP (Hataya Gaya) ---
+    # Aapki demand ke hisaab se image ko delete NAHI kiya gaya hai
+    # taaki wo 'images/' folder mein hamesha save rahe.
 
 if __name__ == "__main__":
     process_and_post()
