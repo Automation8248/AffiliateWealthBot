@@ -224,7 +224,7 @@ def process_and_post():
 
     # 1. Telegram par bhejna
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        caption = f"🔥 **{final_title}**\n\n✨ {short_description}\n\n🛒 **Buy Here:** {affiliate_link}\n\n{final_tags}"
+        caption = f"🔥 **{final_title}**\n\n🛒 **Buy Here:** {affiliate_link}"
         
         if image_downloaded:
             telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
