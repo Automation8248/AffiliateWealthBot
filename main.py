@@ -19,11 +19,8 @@ LINKS_FILE = "links.txt"
 TITLES_FILE = "titles.txt"
 TAGS_FILE = "tags.txt"
 
-# --- NAYA LOGIC: IMAGE FOLDER AUR GITHUB URL ---
-IMAGE_DIR = "images"
-TEMP_IMAGE_FILE = f"{IMAGE_DIR}/pro_img.jpg"
-# GitHub repo ka naam automatic uthane ke liye
-GITHUB_REPO = os.environ.get("GITHUB_REPOSITORY", "AapkaUsername/AapkaRepo")
+# Ab folder nahi banega, sirf temporary file banegi jo baad mein delete ho jayegi
+TEMP_IMAGE_FILE = "temp_image.jpg"
 
 # --- 50+ RANDOM USER AGENTS (PURI LIST) ---
 USER_AGENTS = [
@@ -79,6 +76,25 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
 ]
 
+# --- CATBOX.MOE UPLOAD FUNCTION (10 TRIES LOGIC) ---
+def upload_to_catbox(file_path, retries=10):
+    url = "https://catbox.moe/user/api.php"
+    for i in range(retries):
+        try:
+            with open(file_path, 'rb') as f:
+                data = {'reqtype': 'fileupload'}
+                files = {'fileToUpload': f}
+                print(f"🔄 Catbox upload try {i+1}/{retries}...")
+                response = requests.post(url, data=data, files=files, timeout=30)
+                
+                if response.status_code == 200 and "catbox.moe" in response.text:
+                    return response.text.strip()
+        except Exception as e:
+            print(f"⚠️ Catbox upload fail hua (Try {i+1}): {e}")
+            
+        time.sleep(2) # 2 second wait karega agle try se pehle
+    return None
+
 def load_history():
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, "r") as f:
@@ -113,7 +129,6 @@ def get_available_link():
         if link in history:
             last_used_str = history[link]
             last_used_date = datetime.fromisoformat(last_used_str)
-            # 7 Din ka Cooldown check
             if now - last_used_date >= timedelta(days=COOLDOWN_DAYS):
                 available_links.append(link)
         else:
@@ -161,45 +176,34 @@ def process_and_post():
         page = context.new_page()
         
         try:
-            # 1. Page load karo
             page.goto(affiliate_link, timeout=45000)
             print("Page par pohoch gaye, insaan ki tarah wait kar rahe hain...")
-            
-            # 2. Human Behavior: 2 se 5 second wait karna
             time.sleep(random.uniform(2.0, 5.0))
             
-            # 3. Screenshot 1: Load hone ke turant baad
             page.screenshot(path="screenshot_1_loaded.png")
             print("📸 Screenshot liya: Page Load.")
 
-            # 4. Human Behavior: Mouse hilaana
             page.mouse.move(random.randint(100, 500), random.randint(100, 500))
             time.sleep(random.uniform(0.5, 1.5))
             
-            # 5. Human Behavior: Niche Scroll karna product details padhne ke liye
             print("Niche scroll kar rahe hain...")
             page.mouse.wheel(0, random.randint(400, 1000))
             time.sleep(random.uniform(1.0, 3.0))
             
-            # 6. Screenshot 2: Scroll karne ke baad
             page.screenshot(path="screenshot_2_scrolled.png")
             print("📸 Screenshot liya: Scroll karne ke baad.")
 
-            # --- EXTRACT DATA ---
-            # Check for CAPTCHA
             if page.locator("#captchacharacters").count() > 0:
                 print("❌ Amazon ne abhi bhi CAPTCHA de diya (IP block).")
                 page.screenshot(path="screenshot_error_captcha.png")
                 browser.close()
                 return
             
-            # Image extract karna
             image_url = ""
             img_locator = page.locator("#landingImage")
             if img_locator.count() > 0:
                 image_url = img_locator.get_attribute("src")
 
-            # Description extract karna
             description = ""
             bullets_locator = page.locator("#feature-bullets li")
             if bullets_locator.count() > 0:
@@ -214,13 +218,9 @@ def process_and_post():
         browser.close()
         print("Browser band kar diya. Data mil gaya.")
 
-    # --- IMAGE DOWNLOAD (WITH FOLDER LOGIC) ---
+    # --- IMAGE DOWNLOAD ---
     image_downloaded = False
     if image_url:
-        # Code check karega ki folder hai ya nahi, aur safety ke saath naya folder banayega
-        if not os.path.exists(IMAGE_DIR):
-            os.makedirs(IMAGE_DIR, exist_ok=True)
-            
         img_response = requests.get(image_url, stream=True)
         if img_response.status_code == 200:
             with open(TEMP_IMAGE_FILE, 'wb') as f:
@@ -228,10 +228,19 @@ def process_and_post():
                     f.write(chunk)
             image_downloaded = True
 
+    # --- CATBOX UPLOAD ---
+    final_image_link = image_url  # Agar upload fail ho to default amazon link rahega
+    if image_downloaded:
+        print("🚀 Image Catbox par upload kar rahe hain...")
+        catbox_link = upload_to_catbox(TEMP_IMAGE_FILE, retries=10)
+        if catbox_link:
+            print(f"✅ Catbox Upload Success: {catbox_link}")
+            final_image_link = catbox_link
+        else:
+            print("❌ Catbox Upload 10 baar try karne par bhi fail ho gaya.")
+
     # 300 Chars Limit Description
     short_description = description[:297] + "..." if len(description) > 300 else description
-    
-    # Files se Random Title (Keval 1) aur Tags (Keval 9) select karna
     final_title = get_random_title()
     final_tags = get_random_tags(count=9)
 
@@ -254,20 +263,17 @@ def process_and_post():
         else:
             print(f"❌ Telegram Error: {t_res.text}")
 
-    # --- 2. WEBHOOK POST (ALL DATA: TITLE, DESCRIPTION, LINK, TAGS, IMAGE RAW URL) ---
+    # --- 2. WEBHOOK POST (CATBOX LINK BHEJEGA) ---
     if WEBHOOK_URL:
-        # GitHub Raw Image URL Banayein
-        raw_image_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{TEMP_IMAGE_FILE}"
-        
         webhook_data = {
             "title": final_title,
             "description": short_description,
             "affiliate_link": affiliate_link,
             "tags": final_tags,
-            "image_url": raw_image_url  # Yahan seedha GitHub ka safe link ja raha hai
+            "image_url": final_image_link  # Yahan ab Catbox ka link jaayega
         }
         
-        # Make.com ko File bhi bhejega (agar file chahiye to) aur URL bhi.
+        # Webhook par bhi image file aur Catbox ka url dono send honge (jaisa aapka code pehle kar raha tha)
         if image_downloaded:
             with open(TEMP_IMAGE_FILE, 'rb') as image_file:
                 w_res = requests.post(WEBHOOK_URL, data=webhook_data, files={"image": image_file})
@@ -279,14 +285,15 @@ def process_and_post():
         else:
             print(f"❌ Webhook Error: {w_res.status_code}")
 
-    # --- HISTORY UPDATE (7-DAY COOLDOWN START) ---
+    # --- HISTORY UPDATE ---
     history[affiliate_link] = datetime.now().isoformat()
     save_history(history)
     print("✅ History update ho gayi! Ab yeh link 7 din baad hi repeat hoga.")
     
-    # --- CLEANUP (Hataya Gaya) ---
-    # Aapki demand ke hisaab se image ko delete NAHI kiya gaya hai
-    # taaki wo 'images/' folder mein hamesha save rahe.
+    # --- CLEANUP (Ab temp image delete ho jayegi kyunki folder mein save nahi karna) ---
+    if os.path.exists(TEMP_IMAGE_FILE):
+        os.remove(TEMP_IMAGE_FILE)
+        print("🗑️ Temp image delete kar di gayi.")
 
 if __name__ == "__main__":
     process_and_post()
