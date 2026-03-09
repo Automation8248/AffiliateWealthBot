@@ -217,9 +217,9 @@ def process_and_post():
     # --- IMAGE DOWNLOAD (WITH FOLDER LOGIC) ---
     image_downloaded = False
     if image_url:
-        # Check karega ki images folder hai ya nahi, nahi hai to banayega
+        # Code check karega ki folder hai ya nahi, aur safety ke saath naya folder banayega
         if not os.path.exists(IMAGE_DIR):
-            os.makedirs(IMAGE_DIR)
+            os.makedirs(IMAGE_DIR, exist_ok=True)
             
         img_response = requests.get(image_url, stream=True)
         if img_response.status_code == 200:
@@ -264,7 +264,7 @@ def process_and_post():
             "description": short_description,
             "affiliate_link": affiliate_link,
             "tags": final_tags,
-            "image_url": raw_image_url  # Ab yahan seedha GitHub ka safe link ja raha hai
+            "image_url": raw_image_url  # Yahan seedha GitHub ka safe link ja raha hai
         }
         
         # Make.com ko File bhi bhejega (agar file chahiye to) aur URL bhi.
