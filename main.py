@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 
 # --- SECRETS & CONFIGURATION ---
-# GitHub Repo Settings mein ye secrets set karein
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL") 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -21,8 +20,7 @@ TITLES_FILE = "titles.txt"
 TAGS_FILE = "tags.txt"
 TEMP_IMAGE_FILE = "temp_image.jpg"
 
-# --- 50+ RANDOM USER AGENTS (PURI LIST) ---
-# Kisi bhi agent ko delete nahi kiya gaya hai
+# --- 50+ RANDOM USER AGENTS ---
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -77,7 +75,6 @@ USER_AGENTS = [
 ]
 
 # --- CATBOX UPLOAD FUNCTION (10 TRIES LOGIC) ---
-# Naya Logic: Image host karega for Webhook permanent link
 def upload_to_catbox(file_path, retries=10):
     url = "https://catbox.moe/user/api.php"
     for i in range(retries):
@@ -91,7 +88,7 @@ def upload_to_catbox(file_path, retries=10):
                     return response.text.strip()
         except Exception as e:
             print(f"⚠️ Catbox fail hua try {i+1}: {e}")
-        time.sleep(2) # 2 second wait agle try se pehle
+        time.sleep(2)
     return None
 
 def load_history():
@@ -132,21 +129,17 @@ def process_and_post():
     if not result: return
     link, history = result
     
-    # Variables safety ke liye global set
     image_url = ""
     description = ""
     image_downloaded = False
-    final_image_link = ""
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        # Random User Agent select
         context = browser.new_context(user_agent=random.choice(USER_AGENTS))
         page = context.new_page()
         
         try:
             print(f"Opening: {link}")
-            # ANTI-BOT: Page load hone se pehle domcontentloaded ka wait
             page.goto(link, timeout=60000, wait_until="domcontentloaded")
             
             # --- CONTINUE SHOPPING BYPASS ---
@@ -154,16 +147,15 @@ def process_and_post():
             if continue_btn.count() > 0:
                 print("⚠️ Bot Check detected! Clicking 'Continue shopping'...")
                 continue_btn.first.click()
-                time.sleep(random.randint(4, 7)) # Safe delay
+                time.sleep(random.randint(4, 7))
             
             # --- ANTI-BOT BEHAVIOR ---
             time.sleep(random.uniform(5, 7))
-            page.mouse.wheel(0, random.randint(700, 1000)) # Scroll Down
+            page.mouse.wheel(0, random.randint(700, 1000))
             time.sleep(random.uniform(2, 4))
-            page.mouse.wheel(0, -random.randint(300, 600)) # Scroll Up
+            page.mouse.wheel(0, -random.randint(300, 600))
             
             # --- EXTRACT DATA ---
-            # Wait for selector ensures data is loaded
             page.wait_for_selector("#landingImage", timeout=15000)
             img_locator = page.locator("#landingImage")
             image_url = img_locator.get_attribute("src") if img_locator.count() > 0 else ""
@@ -172,7 +164,7 @@ def process_and_post():
 
         except Exception as e:
             print(f"❌ Scraping failed: {e}")
-            page.screenshot(path="screenshot_failed.png") # For debugging
+            page.screenshot(path="screenshot_failed.png")
             browser.close()
             return
 
@@ -189,20 +181,16 @@ def process_and_post():
             image_downloaded = True
             print("✅ Image downloaded.")
 
-    # Catbox upload (10 retries as per logic)
+    # Catbox upload (Backup ke liye rakha gaya hai as per instruction)
     if image_downloaded:
-        print("🚀 Uploading Image to Catbox for permanent Webhook URL...")
+        print("🚀 Uploading Image to Catbox as backup...")
         final_image_link = upload_to_catbox(TEMP_IMAGE_FILE)
-        if not final_image_link:
-            print("⚠️ Catbox fail ho gaya. Falling back to original Amazon image URL.")
-            final_image_link = image_url
-
+    
     short_description = description[:290] + "..." if len(description) > 290 else description
     final_title = get_random_title()
     final_tags = get_random_tags()
 
-    # --- 1. TELEGRAM POST (ORIGINAL FILES METHOD) ---
-    # Is option ko delete nahi kiya gaya hai
+    # --- 1. TELEGRAM POST ---
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         print("🚀 Sending to Telegram (Files method)...")
         t_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
@@ -215,18 +203,16 @@ def process_and_post():
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": t_caption, "parse_mode": "Markdown"})
         print("✅ Telegram processing complete.")
 
-    # --- 2. WEBHOOK POST (WITH PERMANENT CATBOX URL) ---
-    # Naya Logic: Permanent hosted URL bhejega for Make.com to avoid error
+    # --- 2. WEBHOOK POST (DIRECT AMAZON URL) ---
     if WEBHOOK_URL:
-        print("🚀 Sending to Webhook (Hosted URL method)...")
+        print("🚀 Sending to Webhook (Direct Amazon URL method)...")
         w_payload = {
             "title": final_title,
             "description": short_description,
             "affiliate_link": link,
             "tags": final_tags,
-            "image_url": final_image_link # <--- Naya Permanent Link
+            "image_url": image_url # <--- SEEDHA AMAZON KA LINK JAYEGA
         }
-        # JSON Payload send kar rahe hain proper Webhook transfer ke liye
         w_res = requests.post(WEBHOOK_URL, json=w_payload, timeout=30)
         
         if w_res.status_code == 200:
