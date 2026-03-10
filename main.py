@@ -182,7 +182,18 @@ def process_and_post():
         try:
             page.goto(affiliate_link, timeout=45000)
             
-            # --- 1. NEW LOGIC: 5 SE 7 SECOND WAIT ---
+            # --- 0. NEW ANTI-BOT LOGIC: "Continue shopping" BUTTON CLICK ---
+            try:
+                # Check karega ki "Continue shopping" ka button screen par hai ya nahi
+                continue_btn = page.locator("text=/Continue shopping/i")
+                if continue_btn.count() > 0:
+                    print("⚠️ 'Continue shopping' ka bot-check page detect hua. Button par click kar rahe hain...")
+                    continue_btn.first.click()
+                    time.sleep(4) # Click karne ke baad actual page load hone ka wait karega
+            except Exception:
+                pass # Agar button nahi mila, iska matlab direct page load ho gaya hai, aage badho
+            
+            # --- 1. HUMAN BEHAVIOR: 5 SE 7 SECOND WAIT ---
             print("Page par pohoch gaye, insaan ki tarah 5 se 7 second wait kar rahe hain...")
             time.sleep(random.uniform(5.0, 7.0)) 
             
@@ -193,7 +204,7 @@ def process_and_post():
             page.mouse.move(random.randint(100, 500), random.randint(100, 500))
             time.sleep(random.uniform(0.5, 1.5))
             
-            # --- 2. NEW LOGIC: NICHE AUR UPAR SCROLL KAREGA ---
+            # --- 2. HUMAN BEHAVIOR: NICHE AUR UPAR SCROLL KAREGA ---
             print("Niche scroll kar rahe hain...")
             page.mouse.wheel(0, random.randint(600, 1000)) # Niche ki taraf
             time.sleep(random.uniform(2.0, 3.0))
