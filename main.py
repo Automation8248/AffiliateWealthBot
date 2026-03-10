@@ -20,7 +20,7 @@ TITLES_FILE = "titles.txt"
 TAGS_FILE = "tags.txt"
 TEMP_IMAGE_FILE = "temp_image.jpg"
 
-# --- 50+ RANDOM USER AGENTS (PURI LIST SAFE HAI) ---
+# --- 50+ RANDOM USER AGENTS ---
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -131,33 +131,36 @@ def process_and_post():
     description = ""
     
     with sync_playwright() as p:
-        # Proxy Hata Di Gayi Hai
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent=random.choice(USER_AGENTS))
         page = context.new_page()
         
         try:
             print(f"Processing Link: {link}")
-            # domcontentloaded se page bahut fast load hoga
             page.goto(link, timeout=50000, wait_until="domcontentloaded")
             
-            # --- 1. SMART ANTI-BOT LOGIC (MIND SET FOR "CONTINUE SHOPPING") ---
+            # --- 1. VISUAL & DOM MATCHING LOGIC (As per your image URL) ---
+            print("👁️ Checking interface for the 'Continue shopping' button...")
             try:
-                # Ye bot ka 'mind' hai: Chahe interface kaisa bhi ho, ye text dhundhega
-                continue_btn = page.locator("text=/Continue shopping/i")
+                # Combining multiple exact selectors found in the Amazon "Continue shopping" page HTML
+                # This guarantees it finds the button no matter how Amazon formats it
+                continue_btn = page.locator("button:has-text('Continue shopping'), input[value='Continue shopping'], span.a-button-inner > a, text=/Continue shopping/i").first
                 
-                # Agar button screen par mojud hai toh human click karega
-                if continue_btn.count() > 0 and continue_btn.first.is_visible():
-                    print("⚠️ 'Continue shopping' ka bot-check page detect hua! Button par click kar rahe hain...")
-                    continue_btn.first.hover()
+                # Wait up to 3 seconds for it to appear
+                continue_btn.wait_for(state="visible", timeout=3000)
+                
+                if continue_btn.is_visible():
+                    print("⚠️ Match found! 'Continue shopping' button detected exactly as per your image.")
+                    continue_btn.hover()
                     time.sleep(random.uniform(1.0, 2.0))
-                    continue_btn.first.click(delay=random.randint(200, 500))
                     
-                    # Naya page load hone ka theek se wait karega
+                    # Force click to ensure it triggers even if Amazon tries to block automated clicks
+                    continue_btn.click(delay=random.randint(200, 500), force=True)
+                    
                     print("✅ Click kar diya, main page ka wait kar rahe hain...")
                     time.sleep(random.uniform(5.0, 7.0))
             except Exception:
-                pass # Button nahi mila toh sidha aage badhega
+                print("➡️ Normal page load, Continue Shopping button nahi mila. Proceeding...")
             
             # --- 2. HUMAN BEHAVIOR: WAIT & SCROLL ---
             print("Main page par pohoch gaye, insaan ki tarah ruk rahe hain...")
